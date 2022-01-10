@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-akula = { git = "https://github.com/ultratwo/akula", branch = "public-state" }
+akula = { git = "https://github.com/akula-bft/akula" , rev = "53a43a92141e55ca64c38265523ad4d88d0dc452"}
 ethereum-pyspec-db = { git = "https://github.com/ultratwo/rust-pyspec-db" }
 anyhow = "1.0.52"
 async-trait = "0.1.52"
@@ -14,7 +14,6 @@ console-subscriber = "0.1.0"
 mdbx = { package = "libmdbx", version = "0.1" }
 rayon = "1.5.1"
 rlp = "0.5.1"
-structopt = "0.3.25"
 tokio = "1.15.0"
 tokio-stream = "0.1.8"
 tracing = "0.1.29"
@@ -23,3 +22,5 @@ ethereum-types = "0.12.1"
 sha3 = "0.10.0"
 derive_more = "0.99.17"
 directories = "4.0.1"
+clap = "3.0.5"
+tempfile = "3.3.0"

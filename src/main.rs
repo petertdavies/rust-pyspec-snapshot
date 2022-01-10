@@ -24,8 +24,9 @@ use akula::{
     stages::*,
     version_string, StageId,
 };
-use anyhow::bail;
+use anyhow::{bail, Context};
 use async_trait::async_trait;
+use clap::Parser;
 use derive_more::*;
 use directories::ProjectDirs;
 use rayon::prelude::*;
@@ -35,7 +36,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use structopt::StructOpt;
 use tokio::pin;
 use tokio_stream::StreamExt;
 use tracing::*;
@@ -51,6 +51,10 @@ pub struct AkulaDataDir(pub PathBuf);
 impl AkulaDataDir {
     pub fn chain_data_dir(&self) -> PathBuf {
         self.0.join("chaindata")
+    }
+
+    pub fn etl_temp_dir(&self) -> PathBuf {
+        self.0.join("etl-temp")
     }
 }
 
@@ -70,22 +74,22 @@ impl Display for AkulaDataDir {
     }
 }
 
-#[derive(StructOpt)]
-#[structopt(
+#[derive(Parser)]
+#[clap(
     name = "Rust Pyspec Snapshot",
     about = "Generates state snapshots for the Ethereum Execution Specs"
 )]
 pub struct Opt {
     /// Path to Erigon database directory, where to get blocks from.
-    #[structopt(long = "erigon-datadir", parse(from_os_str))]
+    #[clap(long = "erigon-datadir", parse(from_os_str))]
     pub erigon_data_dir: Option<PathBuf>,
 
     /// Path to Akula database directory.
-    #[structopt(long = "datadir", help = "Database directory path", default_value)]
+    #[clap(long = "datadir", help = "Database directory path", default_value_t)]
     pub data_dir: AkulaDataDir,
 
     /// Name of the testnet to join
-    #[structopt(
+    #[clap(
         long = "chain",
         help = "Name of the testnet to join",
         default_value = "mainnet"
@@ -93,21 +97,25 @@ pub struct Opt {
     pub chain_name: String,
 
     /// Downloader options.
-    #[structopt(flatten)]
+    #[clap(flatten)]
     pub downloader_opts: akula::downloader::opts::Opts,
 
+    /// Sender recovery batch size (blocks)
+    #[clap(long, default_value = "50000")]
+    pub sender_recovery_batch_size: u64,
+
     /// Execution batch size (Ggas).
-    #[structopt(long, default_value = "5000")]
+    #[clap(long, default_value = "5000")]
     pub execution_batch_size: u64,
 
     /// Execution history batch size (Ggas).
-    #[structopt(long, default_value = "250")]
+    #[clap(long, default_value = "250")]
     pub execution_history_batch_size: u64,
 
-    #[structopt(long)]
+    #[clap(long)]
     pub snapshot: BlockNumber,
 
-    #[structopt(short, long, parse(from_os_str))]
+    #[clap(short, long, parse(from_os_str))]
     pub output: Option<PathBuf>,
 }
 
@@ -197,7 +205,6 @@ where
         Ok(ExecOutput::Progress {
             stage_progress: highest_block,
             done: true,
-            must_commit: highest_block > original_highest_block,
         })
     }
 
@@ -239,7 +246,6 @@ where
 
         Ok(UnwindOutput {
             stage_progress: input.unwind_to,
-            must_commit: true,
         })
     }
 }
@@ -420,7 +426,6 @@ where
         Ok(ExecOutput::Progress {
             stage_progress: highest_block,
             done,
-            must_commit: highest_block > original_highest_block,
         })
     }
     async fn unwind<'tx>(
@@ -453,7 +458,6 @@ where
 
         Ok(UnwindOutput {
             stage_progress: input.unwind_to,
-            must_commit: true,
         })
     }
 }
@@ -492,7 +496,6 @@ where
                 ExecOutput::Progress {
                     stage_progress: prev_stage,
                     done: true,
-                    must_commit: true,
                 }
             } else {
                 if self.exit_after_sync {
@@ -505,7 +508,6 @@ where
                 ExecOutput::Progress {
                     stage_progress: prev_stage,
                     done: true,
-                    must_commit: true,
                 }
             },
         )
@@ -520,7 +522,6 @@ where
     {
         Ok(UnwindOutput {
             stage_progress: input.unwind_to,
-            must_commit: true,
         })
     }
 }
@@ -528,7 +529,7 @@ where
 #[allow(unreachable_code)]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let opt: Opt = Opt::from_args();
+    let opt: Opt = Opt::parse();
 
     // tracing setup
     let env_filter = if std::env::var(EnvFilter::DEFAULT_ENV)
@@ -564,10 +565,21 @@ async fn main() -> anyhow::Result<()> {
 
     std::fs::create_dir_all(&opt.data_dir.0)?;
     let akula_chain_data_dir = opt.data_dir.chain_data_dir();
+    let etl_temp_path = opt.data_dir.etl_temp_dir();
+    let _ = std::fs::remove_dir_all(&etl_temp_path);
+    std::fs::create_dir_all(&etl_temp_path)?;
+    let etl_temp_dir =
+        Arc::new(tempfile::tempdir_in(&etl_temp_path).context("failed to create ETL temp dir")?);
     let db = akula::kv::new_database(&akula_chain_data_dir)?;
     async {
         let txn = db.begin_mutable().await?;
-        if akula::genesis::initialize_genesis(&txn, chain_config.chain_spec().clone()).await? {
+        if akula::genesis::initialize_genesis(
+            &txn,
+            &*etl_temp_dir,
+            chain_config.chain_spec().clone(),
+        )
+        .await?
+        {
             txn.commit().await?;
         }
 
@@ -587,14 +599,18 @@ async fn main() -> anyhow::Result<()> {
     } else {
         bail!("Must specify --erigon-data-dir");
     }
-    staged_sync.push(BlockHashes);
+    staged_sync.push(BlockHashes {
+        temp_dir: etl_temp_dir,
+    });
     if let Some(erigon_db) = erigon_db {
         staged_sync.push(ConvertBodies { db: erigon_db });
     } else {
         // also add body download stage here
     }
     staged_sync.push(CumulativeIndex);
-    staged_sync.push(SenderRecovery);
+    staged_sync.push(SenderRecovery {
+        batch_size: opt.sender_recovery_batch_size.try_into().unwrap(),
+    });
 
     info!("Running staged sync");
     staged_sync.run(&db).await?;

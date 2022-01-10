@@ -4,7 +4,7 @@ use akula::models::*;
 use akula::stagedsync::stage::{ExecOutput, Stage, StageInput};
 use akula::stagedsync::stages::{StageId, EXECUTION};
 use akula::stages::Execution;
-use akula::state::*;
+use akula::*;
 use std::time::Instant;
 use tracing::*;
 
@@ -28,6 +28,18 @@ pub async fn reset_execution<'db, DB: MutableKV>(
     tx.clear_table(StorageHistory).await?;
     info!("clearing Code");
     tx.clear_table(Code).await?;
+    info!("clearing Log");
+    tx.clear_table(Log).await?;
+    info!("clearing CallFromIndex");
+    tx.clear_table(CallFromIndex).await?;
+    info!("clearing CallToIndex");
+    tx.clear_table(CallToIndex).await?;
+    info!("clearing AccountHistory");
+    tx.clear_table(AccountHistory).await?;
+    info!("clearing StorageHistory");
+    tx.clear_table(StorageHistory).await?;
+    info!("clearing CallTraceSet");
+    tx.clear_table(CallTraceSet).await?;
 
     let genesis = chainspec.genesis.number;
     let mut state_buffer = Buffer::new(&tx, genesis, None);
@@ -93,7 +105,6 @@ pub async fn run_execution<'db, DB: MutableKV>(
             ExecOutput::Progress {
                 done,
                 stage_progress,
-                must_commit,
                 ..
             } => {
                 EXECUTION.save_progress(&tx, stage_progress).await?;
@@ -103,15 +114,6 @@ pub async fn run_execution<'db, DB: MutableKV>(
                     info!("Progress: {} To: {}", senders_progress, to);
                     // Break out and move to the next stage.
                     break stage_progress;
-                }
-
-                // Stage requested that we commit into database now.
-                if must_commit {
-                    // Commit and restart transaction.
-                    debug!("Commit requested");
-                    tx.commit().await?;
-                    debug!("Commit complete");
-                    tx = db.begin_mutable().await?;
                 }
 
                 restarted = true;
