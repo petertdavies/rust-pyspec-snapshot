@@ -70,14 +70,20 @@ pub async fn run_execution<'db, DB: MutableKV>(
     db: &'db DB,
     to: BlockNumber,
 ) -> anyhow::Result<()> {
-    let mut tx = db.begin_mutable().await?;
+    let mut progress;
+    let start_progress;
+    let senders_progress;
     let start_time = Instant::now();
-    let senders_progress = StageId("SenderRecovery")
-        .get_progress(&tx)
-        .await?
-        .unwrap_or_default();
-    let start_progress = EXECUTION.get_progress(&tx).await?;
-    let mut progress = start_progress;
+    {
+        let tx = db.begin().await?;
+        senders_progress = StageId("SenderRecovery")
+            .get_progress(&tx)
+            .await?
+            .unwrap_or_default();
+        start_progress = EXECUTION.get_progress(&tx).await?;
+        progress = start_progress;
+        drop(tx);
+    }
 
     info!(
         "RUNNING from {} to {}",
@@ -89,6 +95,7 @@ pub async fn run_execution<'db, DB: MutableKV>(
 
     let mut restarted = false;
     let final_progress = loop {
+        let mut tx = db.begin_mutable().await?;
         let output = execution
             .execute(
                 &mut tx,
@@ -108,6 +115,7 @@ pub async fn run_execution<'db, DB: MutableKV>(
                 ..
             } => {
                 EXECUTION.save_progress(&tx, stage_progress).await?;
+                tx.commit().await?;
                 progress = Some(stage_progress);
 
                 if done {
@@ -123,6 +131,5 @@ pub async fn run_execution<'db, DB: MutableKV>(
     };
 
     assert_eq!(final_progress, to);
-    tx.commit().await?;
     Ok(())
 }

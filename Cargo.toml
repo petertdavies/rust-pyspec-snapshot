@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 akula = { git = "https://github.com/akula-bft/akula" , rev = "53a43a92141e55ca64c38265523ad4d88d0dc452"}
-ethereum-pyspec-db = { git = "https://github.com/ultratwo/rust-pyspec-db" }
+ethereum-pyspec-db = { git = "https://github.com/petertdavies/rust-pyspec-db", rev = "e7e68e3c245e918a1e39f12e9b7603b279f935df" }
 anyhow = "1.0.52"
 async-trait = "0.1.52"
 console-subscriber = "0.1.0"
