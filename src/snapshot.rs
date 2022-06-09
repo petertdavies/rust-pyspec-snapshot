@@ -16,6 +16,7 @@ pub async fn snapshot<DB: MutableKV>(db: &DB, path: &std::path::Path) -> anyhow:
     {
         let mut pyspec_tx = pyspec_db.begin_mutable()?;
         pyspec_tx.set_metadata(b"block_number", block_number.to_string().as_bytes())?;
+        pyspec_tx.set_metadata(b"chain_id", "1".as_bytes())?;
         pyspec_tx.commit()?;
     }
 
