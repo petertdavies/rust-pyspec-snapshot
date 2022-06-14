@@ -21,3 +21,5 @@ To take snapshot you need to configure the following options:
 `--snapshot`: The block number to take a snapshot of.
 
 `-o`: Where to write the state db.
+
+**NOTE:** Erigon alpha with snapshots enabled will not work.

@@ -28,7 +28,7 @@ pub async fn reset_execution<'db, DB: MutableKV>(
     tx.clear_table(StorageHistory).await?;
     info!("clearing Code");
     tx.clear_table(Code).await?;
-    info!("clearing Log");
+    info!("clearing Log (very slow)");
     tx.clear_table(Log).await?;
     info!("clearing CallFromIndex");
     tx.clear_table(CallFromIndex).await?;
